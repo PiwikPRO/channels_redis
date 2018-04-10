@@ -10,7 +10,6 @@ import time
 
 import aioredis
 import msgpack
-
 from channels.exceptions import ChannelFull
 from channels.layers import BaseChannelLayer
 
@@ -85,9 +84,13 @@ class RedisChannelLayer(BaseChannelLayer):
         # Decode each hosts entry into a kwargs dict
         result = []
         for entry in hosts:
-            result.append({
-                "address": entry,
-            })
+            if isinstance(entry, (str, tuple)):
+                conf = {"address": entry}
+            elif isinstance(entry, dict):
+                conf = entry
+            else:
+                raise ValueError("Each hosts entry must be a str, tuple or a dict.")
+            result.append(conf)
         return result
 
     def _setup_encryption(self, symmetric_encryption_keys):
@@ -427,7 +430,14 @@ class RedisChannelLayer(BaseChannelLayer):
             self.kwargs = kwargs
 
         async def __aenter__(self):
-            self.conn = await aioredis.create_redis(**self.kwargs)
+            if "master_name" in self.kwargs and "sentinels" in self.kwargs:
+                sentinel = await aioredis.create_sentinel(
+                    self.kwargs["sentinels"],
+                    **self.kwargs.get("connection_params", {})
+                )
+                self.conn = sentinel.master_for(self.kwargs["master_name"])
+            else:
+                self.conn = await aioredis.create_redis(**self.kwargs)
             return self.conn
 
         async def __aexit__(self, exc_type, exc, tb):
