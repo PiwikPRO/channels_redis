@@ -14,6 +14,7 @@ test_requires = crypto_requires + [
     "pytest-asyncio~=0.8",
     "async_generator~=1.8",
     "async-timeout~=2.0",
+    "asynctest~=0.12",
 ]
 
 

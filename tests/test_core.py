@@ -1,10 +1,10 @@
 import asyncio
 
 import async_timeout
+import asynctest
 import pytest
-from async_generator import async_generator, yield_
-
 from asgiref.sync import async_to_sync
+from async_generator import async_generator, yield_
 from channels_redis.core import ChannelFull, RedisChannelLayer
 
 TEST_HOSTS = [("localhost", 6379)]
@@ -20,6 +20,14 @@ MULTIPLE_TEST_HOSTS = [
     "redis://localhost:6379/7",
     "redis://localhost:6379/8",
     "redis://localhost:6379/9",
+]
+
+SENTINEL_HOSTS = [
+    {
+        "sentinels": [("sentinel-1", 26379), ("sentinel-2", 26379)],
+        "master_name": "cluster-1",
+        "connection_params": {"db": 42},
+    },
 ]
 
 
@@ -88,6 +96,16 @@ def test_double_receive(channel_layer):
     async_to_sync(listen1)()
     # Clean up
     async_to_sync(channel_layer.flush)()
+
+
+@pytest.mark.parametrize("hosts,decoded_hosts", [
+    (TEST_HOSTS, [{"address": host} for host in TEST_HOSTS]),
+    (MULTIPLE_TEST_HOSTS, [{"address": host} for host in MULTIPLE_TEST_HOSTS]),
+    (SENTINEL_HOSTS, SENTINEL_HOSTS),
+])
+def test_hosts_formats(hosts, decoded_hosts):
+    channel_layer = RedisChannelLayer(hosts=hosts)
+    assert channel_layer.hosts == decoded_hosts
 
 
 @pytest.mark.asyncio
@@ -258,3 +276,18 @@ async def test_groups_multiple_hosts_performance(
     async with async_timeout.timeout(timeout):
         for channel in channels:
             assert (await channel_layer.receive(channel))["type"] == "message.1"
+
+
+@pytest.mark.asyncio
+async def test__channel_layer_sentinels():
+    channel_layer = RedisChannelLayer(hosts=SENTINEL_HOSTS)
+    create_sentinel = asynctest.CoroutineMock()
+    sentinel = create_sentinel.return_value
+
+    with asynctest.patch("channels_redis.core.aioredis.create_sentinel", create_sentinel):
+        async with channel_layer.connection(0) as connection:
+            assert connection is sentinel.master_for.return_value
+
+    conf = SENTINEL_HOSTS[0]
+    create_sentinel.assert_called_once_with(conf["sentinels"], **conf["connection_params"])
+    sentinel.master_for.assert_called_once_with(conf["master_name"])

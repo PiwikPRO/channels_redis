@@ -38,6 +38,22 @@ The server(s) to connect to, as either URIs or ``(host, port)`` tuples.
 Defaults to ``['localhost', 6379]``. Pass multiple hosts to enable sharding,
 but note that changing the host list will lose some sharded data.
 
+It's also possible to connect to a Redis cluster using Sentinels::
+
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [{
+                    "sentinels": [("sentinel-1", 26379), ("sentinel-2", 26379)],
+                    "master_name": "cluster-1",
+                    "connection_params": {"db": 42},
+                }]
+            },
+        },
+    }
+
+
 ``prefix``
 ~~~~~~~~~~
 
