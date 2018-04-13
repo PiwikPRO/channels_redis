@@ -3,6 +3,7 @@ import asyncio
 import async_timeout
 import asynctest
 import pytest
+
 from asgiref.sync import async_to_sync
 from async_generator import async_generator, yield_
 from channels_redis.core import ChannelFull, RedisChannelLayer
@@ -304,11 +305,17 @@ async def test__channel_layer_sentinels():
     channel_layer = RedisChannelLayer(hosts=SENTINEL_HOSTS)
     create_sentinel = asynctest.CoroutineMock()
     sentinel = create_sentinel.return_value
+    redis = sentinel.master_for.return_value
+    sentinel.wait_closed = asynctest.CoroutineMock()
+    redis.wait_closed = asynctest.CoroutineMock()
 
     with asynctest.patch("channels_redis.core.aioredis.create_sentinel", create_sentinel):
         async with channel_layer.connection(0) as connection:
-            assert connection is sentinel.master_for.return_value
+            assert connection is redis
 
     conf = SENTINEL_HOSTS[0]
     create_sentinel.assert_called_once_with(conf["sentinels"], **conf["connection_params"])
     sentinel.master_for.assert_called_once_with(conf["master_name"])
+
+    redis.wait_closed.assert_called_once_with()
+    sentinel.wait_closed.assert_called_once_with()
