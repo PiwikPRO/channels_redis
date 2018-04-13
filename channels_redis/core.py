@@ -10,6 +10,7 @@ import time
 
 import aioredis
 import msgpack
+
 from channels.exceptions import ChannelFull
 from channels.layers import BaseChannelLayer
 
@@ -444,10 +445,18 @@ class RedisChannelLayer(BaseChannelLayer):
                     self.kwargs["sentinels"],
                     **self.kwargs.get("connection_params", {})
                 )
+                self.sentinel = sentinel
                 self.conn = sentinel.master_for(self.kwargs["master_name"])
             else:
+                self.sentinel = None
                 self.conn = await aioredis.create_redis(**self.kwargs)
             return self.conn
 
         async def __aexit__(self, exc_type, exc, tb):
+            # Close connections to Redis pool
             self.conn.close()
+            await self.conn.wait_closed()
+            if self.sentinel:
+                # Close connections to Sentinel pool
+                self.sentinel.close()
+                await self.sentinel.wait_closed()
