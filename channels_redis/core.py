@@ -44,6 +44,7 @@ class ConnectionPool:
     def __init__(self, host):
         self.host = host
         self.conn_map = {}
+        self.sentinels_map = {}
         self.in_use = {}
 
     def _ensure_loop(self, loop):
@@ -61,13 +62,27 @@ class ConnectionPool:
 
         return self.conn_map[loop], loop
 
+    @property
+    def is_cluster(self):
+        return "master_name" in self.host and "sentinels" in self.host
+
     async def pop(self, loop=None):
         """
         Get a connection for the given identifier and loop.
         """
         conns, loop = self._ensure_loop(loop)
         if not conns:
-            conns.append(await aioredis.create_redis(**self.host, loop=loop))
+            if self.is_cluster:
+                sentinel = await aioredis.create_sentinel(
+                    self.host["sentinels"], loop=loop,
+                    **self.host.get("connection_params", {})
+                )
+                conn = sentinel.master_for(self.host["master_name"])
+                self.sentinels_map[conn] = sentinel
+            else:
+                conn = await aioredis.create_redis(**self.host, loop=loop)
+            conns.append(conn)
+
         conn = conns.pop()
         self.in_use[conn] = loop
         return conn
@@ -87,6 +102,8 @@ class ConnectionPool:
         Handle a connection that produced an error.
         """
         conn.close()
+        if conn in self.sentinels_map:
+            self.sentinels_map[conn].close()
         del self.in_use[conn]
 
     def reset(self):
@@ -95,6 +112,7 @@ class ConnectionPool:
         """
         self.conn_map = {}
         self.in_use = {}
+        self.sentinels_map = {}
 
     async def close_loop(self, loop):
         """
@@ -104,6 +122,9 @@ class ConnectionPool:
             for conn in self.conn_map[loop]:
                 conn.close()
                 await conn.wait_closed()
+                if conn in self.sentinels_map:
+                    self.sentinels_map[conn].close()
+                    await self.sentinels_map[conn].wait_closed()
             del self.conn_map[loop]
 
         for k, v in self.in_use.items():
@@ -116,6 +137,7 @@ class ConnectionPool:
         """
         conn_map = self.conn_map
         in_use = self.in_use
+        sentinels_map = self.sentinels_map
         self.reset()
         for conns in conn_map.values():
             for conn in conns:
@@ -124,6 +146,9 @@ class ConnectionPool:
         for conn in in_use:
             conn.close()
             await conn.wait_closed()
+        for sentinel in sentinels_map.values():
+            sentinel.close()
+            await sentinel.wait_closed()
 
 
 class ChannelLock:
