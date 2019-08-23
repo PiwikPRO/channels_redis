@@ -9,6 +9,7 @@ import string
 import time
 import types
 
+from redis.sentinel import Sentinel
 import aioredis
 import msgpack
 
@@ -67,7 +68,16 @@ class ConnectionPool:
         """
         conns, loop = self._ensure_loop(loop)
         if not conns:
-            conns.append(await aioredis.create_redis(**self.host, loop=loop))
+            if 'sentinels' in self.host:
+                sentinel = Sentinel(self.host['sentinels'], socket_timeout=0.1)
+                host, port = sentinel.discover_master(self.host['master_name'])
+                params = {
+                    'address': (host, port),
+                    **self.host['connection_params']
+                }
+            else:
+                params = self.host
+            conns.append(await aioredis.create_redis(**params, loop=loop))
         conn = conns.pop()
         self.in_use[conn] = loop
         return conn
